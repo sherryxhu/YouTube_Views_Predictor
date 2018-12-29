@@ -1,0 +1,826 @@
+---
+title: "Final Project"
+author: "Sherry Hu, Daniel Zhou, Bao Van"
+date: "December 15, 2018"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+set.seed(1)
+library("STA210")
+library("readr")
+library("dplyr")
+library("ggplot2")
+library("broom")
+library("knitr")
+library("Sleuth3")
+library("olsrr")
+library("cowplot")
+library("car")
+```
+
+# **I. Data Preparation** 
+```{r}
+# loading in our data file
+youtube <- read_csv("data.csv") %>%
+  na.omit()
+```
+
+```{r}
+# initial look at our data
+glimpse(youtube)
+```
+
+Below is a description of the variables:
+
+1. Unnamed: auto incremented ID of videos
+
+2. V_id: unique video ID
+
+3. caption: categorical variable, a 1 is recorded when there is a caption under the video
+
+4. categoryId: category in which the YouTube video belongs to- there are 15 YouTube categories
+
+5. channelId: ID of the channel
+
+6. commentCount: number of comments on the video
+
+7. definition: categorical variable describing video quality, 1 for HD, 0 for SD
+
+8. dimension: categorical variable describing the dimension of the video, 1 for 3D, 0 for 2D
+
+9. dislikeCount: number of dislikes on the video
+
+10. duration: length of the video in seconds
+
+11. embeddable: categorical variable, 1 for embeddable video, 0 for a non-embeddable video
+
+12. licencedContent: categorical variable, 1 for licensed video, 0 for a non-licensed video
+
+13. likeCount: number of likes on the video
+
+14. privacyStatus: categorical variable, 0 for public, 1 for private
+
+15. thumbnail: link to image of the thumbnail
+
+16. viewCount: number of views the video received
+
+17. channel_ViewCount: number of views the channel received
+
+18. channel_commentCount: number of comments the channel received
+
+19. channel_subscriberCount: number of subscribers the channel has
+
+20. channel_videoCount: number of videos the channel has
+
+21. description_length: length of video description
+
+22. tags_in_desc: number of tags in the video description
+
+23. video_title_length: length of the video's title
+
+24. tags_in_title: number of tags in the video title
+
+25. No_of_tags: number of tags assigned by the publisher to the video 
+
+26. channel_title_length: length of channel title
+
+27. channel_description_length: length of channel description
+
+28. months_old: how old the video is in months
+
+29. channel_months_old: how old the channel is in months
+
+30. day_uploaded: day of the week the video was uploaded
+
+31. social_links: number of social links mentioned on the channel page
+
+32. twitter_url: twitter URL of publisher
+
+```{r}
+# making sure all categorical variables represented with numbers are factors
+youtube <- youtube %>% mutate(caption = as.factor(caption))
+youtube <- youtube %>% mutate(categoryId = as.factor(categoryId))
+youtube <- youtube %>% mutate(definition = as.factor(definition))
+youtube <- youtube %>% mutate(dimension = as.factor(dimension))
+youtube <- youtube %>% mutate(embeddable = as.factor(embeddable))
+youtube <- youtube %>% mutate(licencedContent = as.factor(licencedContent))
+youtube <- youtube %>% mutate(privacyStatus = as.factor(privacyStatus))
+youtube <- youtube %>% mutate(caption = as.factor(caption))
+```
+
+```{r}
+# take random sample of 30,000
+youtube_samp <- sample_n(youtube,30000,replace=F)
+
+# taking a look at our sample data
+glimpse(youtube_samp)
+```
+
+## Removing extraneous variables
+
+Before we start exploring the data, we want to remove certain variables from the model that we know will be problematic. These include the following variables:
+
+1. Unnamed: 0: Since this is unique and incrementing by 1 for each video, this variable won't tell us much. It isn't an actual feature of the video itself. 
+
+2. V_id: This is unique to each video and is just a random string variable that won't tell us much.
+
+3. channelId: Same as 2), but with channels. The variable is just a random string variable that won't tell us much.
+
+4. thumbnail: This gives the URL for the thumbnail image of a video. Since it's not the image itself, we can't do much with it and will not consider it. 
+
+5. commentCount: Since our response variable is the number of views a video receives, and comments can only increase if the views increase, we will remove commentCount from our model.
+
+6. channel_commentCount: Since our response variable is the number of views a video receives, and comments can only increase if the views increase, we will remove channel_commentCount from our model.  
+
+7. twitter_url: This gives us the URL for the twitter account of the content creator. Since this doesn't actually tell us anything about the content creator, we will remove twitter_url from our model.
+
+8. likeCount: The number of likes can only increase if the number of views a video receives increases. Similar to 5), we will remove likeCount.
+
+9. dislikeCount: Same reasoning as 7), but with the number of dislikes. 
+
+10. privacyStatus: There are only 3 videos in the entire dataset of 221,618 videos that are private. We will remove privacyStatus as a variable because our sample does not encapsulate the 3 private variables and the number of private variables is too small to be considered significant. 
+
+## Variable manipulation
+channel_ViewCount: The variable channel_viewCount described the number of views the channel received in total, including each video/observation's views (viewCount). We manipulated this variable by subtracting the video's views from the total views in the channel, shown below. 
+
+```{r}
+youtube_samp <- youtube_samp %>%mutate(channel_ViewCount = channel_ViewCount - viewCount)
+```
+
+# **II. Exploratory Data Analysis**
+We first took a look at the distribution of our response variable, viewCount.
+```{r}
+# distribution of response variable 
+ggplot(youtube_samp,aes(viewCount)) + geom_histogram() +
+  labs(title="Histogram of viewCount") + 
+  theme(plot.title=element_text(hjust=0.5))
+```
+
+Our response variable, viewcount, has a very skewed distribution. Let's try a log transformation shown below: 
+
+```{r}
+ggplot(youtube_samp,aes(log(viewCount))) + geom_histogram()+
+  labs(title="Histogram of log_viewCount") + 
+  theme(plot.title=element_text(hjust=0.5))
+```
+
+The distribution is now a lot more normal. We will add the logged viewCount into our dataset as shown below. 
+
+```{r}
+# add our logged response variable to the data set
+youtube_samp <- youtube_samp %>% mutate(logged_viewCount = log(viewCount))
+```
+
+Next, we decided to look at the scatterplot matrix for each pair of variables to see if there was a necessary transformation. We will also check the residuals of a model including all untransformed variables to helps us make this decision. The following list of variables is the list of variables we considered for our final model after we removing the ones we decided not to use: 
+
+caption, categoryId, definition, dimension, duration, embeddable, licencedContent, channel_ViewCount, channel_subscriberCount, channel_videoCount, description_length, tags_in_desc, video_title_length, tags_in_title, No_of_tags, channel_title_length, channel_description_length, months_old, channel_months_old, day_uploaded, social_links
+
+```{r}
+pairs(logged_viewCount ~ caption + categoryId + definition, data=youtube_samp)
+pairs(logged_viewCount ~ dimension + duration + embeddable, data=youtube_samp)
+pairs(logged_viewCount ~ licencedContent + channel_ViewCount + channel_subscriberCount, data=youtube_samp)
+pairs(logged_viewCount ~ channel_videoCount + description_length + tags_in_desc, data=youtube_samp)
+pairs(logged_viewCount ~ video_title_length + tags_in_title + No_of_tags, data=youtube_samp)
+pairs(logged_viewCount ~ channel_title_length + channel_description_length + months_old, data=youtube_samp)
+pairs(logged_viewCount ~channel_months_old + day_uploaded + social_links, data=youtube_samp)
+```
+
+
+There are also potential transformations required. For channel_ViewCount, channel_subscriberCount, description_length, tags_in_desc, tags_in_title, and No_of_tags, the plot for these variables against the response variable decrease in variability. We may need to log transform these variables or perform some other transformation on them. 
+
+From our output, we see that there is potential concern of multicollinearity between channel_ViewCount and channel_subscriberCount. This makes sense because channels with more subscribers are likely to have more views. There is also potential danger of multicollinearity between No_of_tags and tags_in_title. This makes sense because the tags_in_title contribute to the total number of tags. We will proceed by putting all variables in for model selection, and if there is still danger of multicollinearity after checking VIF's, we will remove one variable. 
+
+
+```{r}
+# splitting data into training and testing with 80/20 ratio (24000 is 80% of 30000)
+train <- youtube_samp[1:24000,]
+test <- youtube_samp[24001:30000,]
+train <- na.omit(train)
+train<-train %>% filter(channel_ViewCount>=0)
+```
+
+## Potential Transformations:
+## a) channel_ViewCount
+```{r}
+# normal
+ggplot(train, aes(x=channel_ViewCount,y=logged_viewCount)) + geom_point()+
+  labs(title="Scatterplot of logged_viewCount vs channel_ViewCount") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+# logged
+shift <-.1
+train<-train%>%mutate(logChannelViewCount = log(channel_ViewCount+shift))
+ggplot(train, aes(x=logChannelViewCount, y = logged_viewCount)) + geom_point()+
+  labs(title="Scatterplot of logged_viewCount vs log_channel_ViewCount") + 
+  theme(plot.title=element_text(hjust=0.5))
+```
+
+It looks like the logged version of the variable produces a much better scatterplot. There is now less of a concern for non constant variance. We will proceed to use the logged version of this variable and add it to the testing data set as well. 
+
+```{r}
+# add to testing data 
+test<-test %>% filter(channel_ViewCount>=0)
+
+test<-test%>%mutate(logChannelViewCount = log(channel_ViewCount+shift))
+
+```
+
+## b) channel_subscriberCount
+```{r}
+# normal
+ggplot(train, aes(x=channel_subscriberCount,y=logged_viewCount)) + geom_point() +
+  labs(title="Scatterplot of logged_viewCount vs channel_subscriberCount") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+# logged
+shift <-.1
+train<-train%>%mutate(logSubCount = log(channel_subscriberCount+shift))
+ggplot(train, aes(x=logSubCount, y = logged_viewCount)) + geom_point() +
+  labs(title="Scatterplot of logged_viewCount vs log_channel_subscriberCount") + 
+  theme(plot.title=element_text(hjust=0.5))
+```
+
+Once again, the logged version looks much better. We will add this to our testing data. 
+
+```{r}
+# add to testing data 
+test<-test%>%mutate(logSubCount = log(channel_subscriberCount+shift))
+```
+
+## c) description_length
+```{r}
+# normal
+ggplot(train, aes(x=description_length,y=logged_viewCount)) + geom_point()+
+  labs(title="Scatterplot of logged_viewCount vs description_length") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+# logged
+shift <-.1
+train<-train%>%mutate(logDescription = log(description_length+shift))
+ggplot(train, aes(x=logDescription, y = logged_viewCount)) + geom_point()+
+  labs(title="Scatterplot of logged_viewCount vs log_description_length") + 
+  theme(plot.title=element_text(hjust=0.5))
+```
+
+```{r}
+# add to testing data 
+test<-test%>%mutate(logDescription = log(description_length+shift))
+```
+
+## d) tags_in_desc
+```{r}
+
+# normal
+ggplot(train, aes(x=tags_in_desc,y=logged_viewCount)) + geom_point() +
+  labs(title="Scatterplot of logged_viewCount vs tags_in_desc") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+# logged
+shift <-.1
+train<-train%>%mutate(logTagsDescrp = log(tags_in_desc+shift))
+ggplot(train, aes(x=logTagsDescrp, y = logged_viewCount)) + geom_point()+
+  labs(title="Scatterplot of logged_viewCount vs logTagsDescrp") + 
+  theme(plot.title=element_text(hjust=0.5))
+```
+
+It looks like the logged version of tags_in_desc does make much a difference, so we will add it to our testing data.
+
+```{r}
+# add to testing data 
+test<-test%>%mutate(logTagsDescrp = log(tags_in_desc+shift))
+```
+
+## e) tags_in_title
+```{r}
+# normal
+ggplot(train, aes(x=tags_in_title,y=logged_viewCount)) + geom_point()+
+  labs(title="Scatterplot of logged_viewCount vs tags_in_title") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+# logged
+shift <-.1
+train<-train%>%mutate(logTagsTitle = log(description_length+shift))
+ggplot(train, aes(x=logTagsTitle, y = logged_viewCount)) + geom_point()+
+  labs(title="Scatterplot of logged_viewCount vs logTagsTitle") + 
+  theme(plot.title=element_text(hjust=0.5))
+```
+
+It looks like the logged version of tags_in_title improves the scatter plot. We will proceed with the logged version. 
+
+```{r}
+# add to testing data 
+test<-test%>%mutate(logTagsTitle = log(tags_in_title+shift))
+```
+
+## f) No_of_tags
+```{r}
+# normal
+ggplot(train, aes(x=No_of_tags,y=logged_viewCount)) + geom_point()+
+  labs(title="Scatterplot of logged_viewCount vs No_of_tags") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+# logged
+shift <-.1
+train<-train%>%mutate(logNoTags = log(No_of_tags+shift))
+ggplot(train, aes(x=logNoTags, y = logged_viewCount)) + geom_point()+
+  labs(title="Scatterplot of logged_viewCount vs logNoTags") + 
+  theme(plot.title=element_text(hjust=0.5))
+```
+
+It looks like the log transformation improves the scatterplot of the variable. We will proceed with using the logged version of No_of_tags.
+
+```{r}
+# add to testing data 
+test<-test%>%mutate(logNoTags = log(No_of_tags+shift))
+```
+
+# **III. Final Model**
+
+To see how we obtain our final model, please refer to section V.
+
+Here is our final model.
+
+```{r}
+train<-train%>%mutate(logDuration = log(duration+shift))
+test<-test%>%mutate(logDuration = log(duration+shift))
+
+train<-train%>%mutate(log_channel_videoCount = log(channel_videoCount+shift))
+test<-test%>%mutate(log_channel_videoCount = log(description_length+shift))
+
+train<-train%>%mutate(logTagsDescrp = log(tags_in_desc+shift))
+test<-test%>%mutate(logTagsDescrp = log(tags_in_desc+shift))
+
+train<-train%>%mutate(log_channel_title_length = log(channel_title_length+shift))
+test<-test%>%mutate(log_channel_title_length = log(channel_title_length+shift))
+
+train<-train%>%mutate(log_channel_description_length = log(channel_description_length+shift))
+test<-test%>%mutate(log_channel_description_length = log(channel_description_length+shift))
+
+
+model.full <- lm(logged_viewCount ~ categoryId + logChannelViewCount + log_channel_videoCount + months_old + caption + channel_months_old + logDuration + social_links + licencedContent + logNoTags + log_channel_description_length + logSubCount + log_channel_title_length + video_title_length + embeddable, data=train) 
+
+kable(tidy(model.full))
+```
+
+Here is a summary.
+
+```{r}
+summary(model.full)
+```
+
+Our adjusted R-squared value was 61.09%, so 61.09% of the variation in the log_viewCount was accounted for by our explanatory variables.
+
+# **IV. Assumptions and Model Fit **
+
+
+```{r}
+model.full <- lm(logged_viewCount ~ categoryId + logChannelViewCount + log_channel_videoCount + months_old + caption + channel_months_old + logDuration + social_links + licencedContent + logNoTags + log_channel_description_length + logSubCount + log_channel_title_length + video_title_length + embeddable , data=train) 
+```
+
+Next, we want to look at our model assumptions to see if there are still any necessary transformations. We do this by examining the residuals vs. predicted plots, residuals vs. explanatory variable plots, and residuals distribution. 
+
+```{r}
+# adding residuals and predicted values to our training data
+train <- train %>%
+mutate(Residuals = resid(model.full)) %>%
+mutate(Predicted = predict(model.full))
+```
+
+```{r}
+# residuals vs. predicted
+p1 <- ggplot(data=train, aes(x=Predicted, y=Residuals)) + geom_point(alpha=0.7) + 
+  geom_hline(yintercept=0,color="red") + 
+  labs(title="Residuals vs. Predicted") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+p1 
+```
+
+Our residuals vs. predicted plot looks pretty decent- the scatter is pretty random. Next we check the plots against all explanatory variables.
+
+```{r}
+model.full <- lm(logged_viewCount ~ categoryId + logChannelViewCount + log_channel_videoCount + months_old + caption + channel_months_old + logDuration + social_links + licencedContent + logNoTags + log_channel_description_length + logSubCount + log_channel_title_length + video_title_length + embeddable , data=train) 
+
+p2 <- ggplot(data=train, aes(x=categoryId, y=Residuals)) + geom_point(alpha=0.7) + 
+  geom_hline(yintercept=0,color="red") + 
+  labs(title="Residuals vs. categoryId") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+p3 <- ggplot(data=train, aes(x=logChannelViewCount, y=Residuals)) + geom_point(alpha=0.7) + 
+  geom_hline(yintercept=0,color="red") + 
+  labs(title="Residuals vs. logChannelViewCount") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+p4 <- ggplot(data=train, aes(x=log_channel_videoCount, y=Residuals)) + geom_point(alpha=0.7) + 
+  geom_hline(yintercept=0,color="red") + 
+  labs(title="Residuals vs. log_channel_videoCount") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+p5 <- ggplot(data=train, aes(x=months_old, y=Residuals)) + geom_point(alpha=0.7) + 
+  geom_hline(yintercept=0,color="red") + 
+  labs(title="Residuals vs. months_old") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+p6 <- ggplot(data=train, aes(x=caption, y=Residuals)) + geom_point(alpha=0.7) + 
+  geom_hline(yintercept=0,color="red") + 
+  labs(title="Residuals vs. caption") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+p7 <- ggplot(data=train, aes(x=channel_months_old, y=Residuals)) + geom_point(alpha=0.7) + 
+  geom_hline(yintercept=0,color="red") + 
+  labs(title="Residuals vs. channel_months_old") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+p8 <- ggplot(data=train, aes(x=logDuration, y=Residuals)) + geom_point(alpha=0.7) + 
+  geom_hline(yintercept=0,color="red") + 
+  labs(title="Residuals vs. logDuration") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+p9 <- ggplot(data=train, aes(x=social_links, y=Residuals)) + geom_point(alpha=0.7) + 
+  geom_hline(yintercept=0,color="red") + 
+  labs(title="Residuals vs. social_links") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+p10 <- ggplot(data=train, aes(x=licencedContent, y=Residuals)) + geom_point(alpha=0.7) + 
+  geom_hline(yintercept=0,color="red") + 
+  labs(title="Residuals vs. licencedContent") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+p11 <- ggplot(data=train, aes(x=logNoTags, y=Residuals)) + geom_point(alpha=0.7) + 
+  geom_hline(yintercept=0,color="red") + 
+  labs(title="Residuals vs. logNoTags") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+p12 <- ggplot(data=train, aes(x=log_channel_description_length, y=Residuals)) + geom_point(alpha=0.7) + 
+  geom_hline(yintercept=0,color="red") + 
+  labs(title="Residuals vs. log_channel_description_length") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+p13 <- ggplot(data=train, aes(x=logSubCount, y=Residuals)) + geom_point(alpha=0.7) + 
+  geom_hline(yintercept=0,color="red") + 
+  labs(title="Residuals vs. logSubCount") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+p14 <- ggplot(data=train, aes(x=log_channel_title_length, y=Residuals)) + geom_point(alpha=0.7) + 
+  geom_hline(yintercept=0,color="red") + 
+  labs(title="Residuals vs. log_channel_title_length") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+p15 <- ggplot(data=train, aes(x=video_title_length, y=Residuals)) + geom_point(alpha=0.7) + 
+  geom_hline(yintercept=0,color="red") + 
+  labs(title="Residuals vs. video_title_length") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+p16 <- ggplot(data=train, aes(x=embeddable, y=Residuals)) + geom_point(alpha=0.7) + 
+  geom_hline(yintercept=0,color="red") + 
+  labs(title="Residuals vs. embeddable") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+
+```
+
+```{r}
+plot_grid(p2, p3, p4, p5)
+```
+
+```{r}
+plot_grid(p6, p7, p8, p9)
+```
+
+```{r}
+plot_grid(p10, p11, p12, p13)
+```
+
+```{r}
+plot_grid(p14,p15,p16)
+```
+
+
+```{r}
+train <- train %>%
+mutate(Residuals = resid(model.full)) %>%
+mutate(Predicted = predict(model.full))
+```
+
+```{r}
+ggplot(data=train, aes(Residuals)) + geom_histogram() + labs(title = "Residuals") + theme(plot.title = element_text(hjust=0.5, size=18))
+```
+
+```{r}
+qqnorm(train$Residuals, main="Residuals Q-Q Plot")
+qqline(train$Residuals)
+```
+
+For our qqplot, the residuals appear to deviate from the line on both ends, but is fine for the most part, and based on our histogram, our residuals appear to be normally distributed, which is a good sign. 
+
+
+```{r}
+train <- train %>%
+  mutate(leverage = hatvalues(model.full), 
+         cooks = cooks.distance(model.full),
+         stand.resid = rstandard(model.full), 
+         obs.num = row_number())
+
+#plot leverage
+ggplot(data=train, aes(x=obs.num,y=leverage)) + 
+  geom_point(alpha=0.5) + 
+  geom_hline(yintercept=2*15/24000,color="red")+
+  labs(x="Observation Number",y="Leverage",title="Leverage")
+
+#plot cook's distance
+ggplot(data=train, aes(x=obs.num,y=cooks)) + 
+  geom_point() + 
+  geom_hline(yintercept=1,color="red")+
+  labs(x="Observation Number",y="Cook's Distance",title="Cook's Distance")
+
+#find multicollinearity
+tidy(vif(model.full))
+
+```
+
+From our diagram, it looks like we have points with high leverage, but there are no influential points. Furthermore, none of the variables have multicollinearity.
+
+## Predictions
+```{r}
+p <- predict(model.full, test)
+error = p - test$logged_viewCount
+
+RMSE = sqrt(mean(error^2))
+RMSE 
+
+plot(p,test$logged_viewCount,
+      xlab="predicted",ylab="actual", main="actual vs predicted")
+ abline(a=0,b=1)
+```
+
+Our root mean squared error was 2.604394, which is pretty good. 
+
+Our graph of the actual vs. predicted displayed above shows that our model performed decently, but not ideally (a perfect model would have more points along the straight line). 
+
+
+
+# **V. Additional Work (Model Selection)**
+
+Based on our EDA, we transformed some variables, but we will want to examine residual plots to determine additional transformations on our explanatory variables before model selection. This is done because model selection may decide an untransformed variable is extraneous, but it may be important if it is transformed.
+
+```{r}
+#model with some transformed variables from EDA
+model.full <- lm(logged_viewCount~caption + categoryId + definition + dimension + duration + embeddable + licencedContent + logChannelViewCount + logSubCount + channel_videoCount + logDescription + tags_in_desc + video_title_length + logTagsTitle + logNoTags + channel_title_length + channel_description_length + months_old + channel_months_old + day_uploaded + social_links,data=train) 
+```
+
+```{r}
+# adding residuals and predicted values to our training data
+train <- train %>%
+mutate(Residuals = resid(model.full)) %>%
+mutate(Predicted = predict(model.full))
+```
+
+```{r}
+# residuals vs. predicted
+p1 <- ggplot(data=train, aes(x=Predicted, y=Residuals)) + geom_point(alpha=0.7) + 
+  geom_hline(yintercept=0,color="red") + 
+  labs(title="Residuals vs. Predicted") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+p1 
+```
+
+Our residuals vs. predicted plot looks pretty decent- the scatter is pretty random. Next we check the plots against all explanatory variables.
+
+```{r}
+p2 <- ggplot(data=train, aes(x=caption, y=Residuals)) + geom_point(alpha=0.7) +      geom_hline(yintercept=0,color="red") + 
+  labs(title="Residuals vs. caption") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+p3 <- ggplot(data=train, aes(x=categoryId, y=Residuals)) + geom_point(alpha=0.7) + 
+  geom_hline(yintercept=0,color="red") + 
+  labs(title="Residuals vs. categoryId") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+p4 <- ggplot(data=train, aes(x=definition, y=Residuals)) + geom_point(alpha=0.7) + 
+  geom_hline(yintercept=0,color="red") + 
+  labs(title="Residuals vs. definition") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+p5 <- ggplot(data=train, aes(x=duration, y=Residuals)) + geom_point(alpha=0.7) + 
+  geom_hline(yintercept=0,color="red") + 
+  labs(title="Residuals vs. duration") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+p6 <- ggplot(data=train, aes(x=embeddable, y=Residuals)) + geom_point(alpha=0.7) + 
+  geom_hline(yintercept=0,color="red") + 
+  labs(title="Residuals vs. embeddable") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+p7 <- ggplot(data=train, aes(x=licencedContent, y=Residuals)) + geom_point(alpha=0.7) + 
+  geom_hline(yintercept=0,color="red") + 
+  labs(title="Residuals vs. licencedContent") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+p8 <- ggplot(data=train, aes(x=logChannelViewCount, y=Residuals)) + geom_point(alpha=0.7) + 
+  geom_hline(yintercept=0,color="red") + 
+  labs(title="Residuals vs. logChannelViewCount") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+p9 <- ggplot(data=train, aes(x=logSubCount, y=Residuals)) + geom_point(alpha=0.7) + 
+  geom_hline(yintercept=0,color="red") + 
+  labs(title="Residuals vs. logSubCount") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+p10 <- ggplot(data=train, aes(x=channel_videoCount, y=Residuals)) + geom_point(alpha=0.7) + 
+  geom_hline(yintercept=0,color="red") + 
+  labs(title="Residuals vs. channel_videoCount") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+p11 <- ggplot(data=train, aes(x=tags_in_desc, y=Residuals)) + geom_point(alpha=0.7) + 
+  geom_hline(yintercept=0,color="red") + 
+  labs(title="Residuals vs. tags_in_desc") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+p12 <- ggplot(data=train, aes(x=video_title_length, y=Residuals)) + geom_point(alpha=0.7) + 
+  geom_hline(yintercept=0,color="red") + 
+  labs(title="Residuals vs. video_title_length") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+p13 <- ggplot(data=train, aes(x=logNoTags, y=Residuals)) + geom_point(alpha=0.7) + 
+  geom_hline(yintercept=0,color="red") + 
+  labs(title="Residuals vs. logNoTags") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+p14 <- ggplot(data=train, aes(x=channel_title_length, y=Residuals)) + geom_point(alpha=0.7) + 
+  geom_hline(yintercept=0,color="red") + 
+  labs(title="Residuals vs. channel_title_length") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+p15 <- ggplot(data=train, aes(x=channel_description_length, y=Residuals)) + geom_point(alpha=0.7) + 
+  geom_hline(yintercept=0,color="red") + 
+  labs(title="Residuals vs. channel_description_length") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+p16 <- ggplot(data=train, aes(x=channel_months_old, y=Residuals)) + geom_point(alpha=0.7) + 
+  geom_hline(yintercept=0,color="red") + 
+  labs(title="Residuals vs. channel_months_old") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+p17 <- ggplot(data=train, aes(x=day_uploaded, y=Residuals)) + geom_point(alpha=0.7) + 
+  geom_hline(yintercept=0,color="red") + 
+  labs(title="Residuals vs. day_uploaded") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+p18 <- ggplot(data=train, aes(x=social_links, y=Residuals)) + geom_point(alpha=0.7) + 
+  geom_hline(yintercept=0,color="red") + 
+  labs(title="Residuals vs. social_links") + 
+  theme(plot.title=element_text(hjust=0.5))
+```
+
+```{r}
+plot_grid(p2, p3, p4, p5)
+```
+
+```{r}
+plot_grid(p6, p7, p8, p9)
+```
+
+```{r}
+plot_grid(p10, p11, p12, p13)
+```
+
+```{r}
+plot_grid(p14,p15,p16)
+```
+
+
+```{r}
+plot_grid(p17,p18)
+```
+
+Based on these residual plots, duration, embeddable, channel_videoCount, tags_in_desc, channel_title_length, and channel_description_length may need transformations.
+
+## Potential Transformations:
+## a) duration
+```{r}
+# normal
+ggplot(train, aes(x=duration,y=logged_viewCount)) + geom_point()+
+  labs(title="Scatterplot of logged_viewCount vs duration") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+# logged
+shift <-.1
+train<-train%>%mutate(logDuration = log(duration+shift))
+ggplot(train, aes(x=logDuration, y = logged_viewCount)) + geom_point()+
+  labs(title="Scatterplot of logged_viewCount vs logDuration") + 
+  theme(plot.title=element_text(hjust=0.5))
+```
+
+It looks like the logged version of the variable produces a much better scatterplot. There is now less of a concern for non constant variance. We will proceed to use the logged version of this variable and add it to the testing data set as well. 
+
+```{r}
+# add to testing data 
+test<-test%>%mutate(logDuration = log(duration+shift))
+
+```
+
+
+## b) channel_videoCount
+```{r}
+# normal
+ggplot(train, aes(x=channel_videoCount,y=logged_viewCount)) + geom_point()+
+  labs(title="Scatterplot of logged_viewCount vs channel_viewCount") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+# logged
+shift <-.1
+train<-train%>%mutate(log_channel_videoCount = log(channel_videoCount+shift))
+ggplot(train, aes(x=log_channel_videoCount, y = logged_viewCount)) + geom_point()+
+  labs(title="Scatterplot of logged_viewCount vs log_channel_viewCount") + 
+  theme(plot.title=element_text(hjust=0.5))
+```
+
+```{r}
+# add to testing data 
+test<-test%>%mutate(log_channel_videoCount = log(channel_videoCount+shift))
+```
+
+
+## c) channel_title_length
+```{r}
+# normal
+ggplot(train, aes(x=channel_title_length,y=logged_viewCount)) + geom_point()+
+  labs(title="Scatterplot of logged_viewCount vs channel_title_length") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+# logged
+shift <-.1
+train<-train%>%mutate(log_channel_title_length = log(channel_title_length+shift))
+ggplot(train, aes(x=log_channel_title_length, y = logged_viewCount)) + geom_point()+
+  labs(title="Scatterplot of logged_viewCount vs log_channel_title_length") + 
+  theme(plot.title=element_text(hjust=0.5))
+```
+
+It looks like the logged version of channel_title_length improves the scatter plot. We will proceed with the logged version. 
+
+```{r}
+# add to testing data 
+test<-test%>%mutate(log_channel_title_length = log(channel_title_length+shift))
+```
+
+## d) channel_description_length
+```{r}
+# normal
+ggplot(train, aes(x=channel_description_length,y=logged_viewCount)) + geom_point()+
+  labs(title="Scatterplot of logged_viewCount vs channel_description_length") + 
+  theme(plot.title=element_text(hjust=0.5))
+
+# logged
+shift <-.1
+train<-train%>%mutate(log_channel_description_length = log(channel_description_length+shift))
+ggplot(train, aes(x=log_channel_description_length, y = logged_viewCount)) + geom_point()+
+  labs(title="Scatterplot of logged_viewCount vs log_channel_description_length") + 
+  theme(plot.title=element_text(hjust=0.5))
+```
+
+It looks like the log transformation improves the scatterplot of the variable. We will proceed with using the logged version of log_channel_description_length.
+
+```{r}
+# add to testing data 
+test<-test%>%mutate(log_channel_description_length = log(channel_description_length+shift))
+```
+
+We started off with a model containing every variable we didn't remove. Additionally, we performed our model selection by splitting our sample into testing and training data and selecting on the training data. Then we made a model on variables transformed from EDA to find new variables to transform. Finally, we used stepwise selection to select explanatory variables. 
+
+```{r}
+## stepwise model selection
+# model will all possible variables
+model.full <- lm(logged_viewCount~caption + categoryId + definition + dimension + logDuration + embeddable + licencedContent + logChannelViewCount + logSubCount + log_channel_videoCount + logDescription + logTagsDescrp + video_title_length + logTagsTitle + logNoTags + log_channel_title_length + log_channel_description_length + months_old + channel_months_old + day_uploaded + social_links,data=train) 
+
+stepwise <- ols_step_both_aic(model.full)
+
+```
+
+```{r}
+model.full <- lm(logged_viewCount ~ categoryId + logChannelViewCount + log_channel_videoCount + months_old + caption + channel_months_old + logDuration + social_links + licencedContent + logNoTags + log_channel_description_length + logSubCount + log_channel_title_length + video_title_length + embeddable + definition, data=train) 
+
+kable(tidy(model.full))
+
+```
+
+Only definition has a p-value over .05, so we will use an anova test to check if it is an important predictor. 
+
+```{r}
+model.no.definition <- lm(logged_viewCount ~ categoryId + logChannelViewCount + log_channel_videoCount + months_old + caption + channel_months_old + logDuration + social_links + licencedContent + logNoTags + log_channel_description_length + logSubCount + log_channel_title_length + video_title_length + embeddable , data=train) 
+
+model.definition <- lm(logged_viewCount ~ categoryId + logChannelViewCount + log_channel_videoCount + months_old + caption + channel_months_old + logDuration + social_links + licencedContent + logNoTags + log_channel_description_length + logSubCount + log_channel_title_length + video_title_length + embeddable +definition, data=train) 
+
+anova(model.no.definition, model.definition)
+```
+
+Since the p-value is above 0.05, we will not include definition in our model. 
+
+
+
+
